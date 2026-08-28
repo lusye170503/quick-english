@@ -326,17 +326,17 @@
     </nav>
 
     <script>
-        const questions = [
-            "これは私が昨日買った本です。",
-            "彼は毎朝7時に起きます。",
-            "明日晴れたら、公園に行きましょう。",
-            "英語を上手に話せるようになりたいです。",
-            "今何をしていますか？",
-            "彼女は私より背が高いです。",
-            "この部屋でタバコを吸ってはいけません。",
-            "手伝いましょうか？",
-            "私は一度も外国に行ったことがありません。",
-            "駅への行き方を教えていただけますか？"
+        const questionsData = [
+            { q: "これは私が昨日買った本です。", defaultModel: "This is the book that I bought yesterday." },
+            { q: "彼は毎朝7時に起きます。", defaultModel: "He gets up at seven every morning." },
+            { q: "明日晴れたら、公園に行きましょう。", defaultModel: "Let's go to the park if it is sunny tomorrow." },
+            { q: "英語を上手に話せるようになりたいです。", defaultModel: "I want to be able to speak English well." },
+            { q: "今何をしていますか？", defaultModel: "What are you doing now?" },
+            { q: "彼女は私より背が高いです。", defaultModel: "She is taller than me." },
+            { q: "この部屋でタバコを吸ってはいけません。", defaultModel: "You must not smoke in this room." },
+            { q: "手伝いましょうか？", defaultModel: "Shall I help you?" },
+            { q: "私は一度も外国に行ったことがありません。", defaultModel: "I have never been abroad." },
+            { q: "駅への行き方を教えていただけますか？", defaultModel: "Could you tell me how to get to the station?" }
         ];
 
         let currentQIndex = 0;
@@ -394,8 +394,8 @@
 
         function loadQuestion() {
             accumulatedTime = 0;
-            document.getElementById('q-number').innerText = `第 ${currentQIndex + 1} 問 / ${questions.length}`;
-            document.getElementById('q-text').innerText = questions[currentQIndex];
+            document.getElementById('q-number').innerText = `第 ${currentQIndex + 1} 問 / ${questionsData.length}`;
+            document.getElementById('q-text').innerText = questionsData[currentQIndex].q;
             document.getElementById('user-input').value = '';
 
             startTimer();
@@ -449,16 +449,17 @@
             }
 
             userResults.push({
-                q: questions[currentQIndex],
+                q: questionsData[currentQIndex].q,
                 a: answer,
                 time: elapsed,
-                isSkip: isSkip
+                isSkip: isSkip,
+                defaultModel: questionsData[currentQIndex].defaultModel
             });
 
             if (isRecording) stopRecording();
 
             currentQIndex++;
-            if (currentQIndex < questions.length) {
+            if (currentQIndex < questionsData.length) {
                 loadQuestion();
             } else {
                 finishLesson();
@@ -484,39 +485,46 @@
         async function analyzeWithGemini() {
             const apiKey = localStorage.getItem('gemini_api_key');
             const statusEl = document.getElementById('ai-status');
-            const listEl = document.getElementById('results-list');
 
             if (!apiKey) {
-                statusEl.innerHTML = "⚠️ APIキーが未設定のためAI判定がスキップされました。<br>「設定」からキーを登録してください。";
-                renderSimpleResults();
+                statusEl.innerHTML = "⚠️ APIキーが未設定です。「設定」画面からGemini APIキーを入力すると詳細フィードバックが表示されます。";
+                renderSimpleResults("APIキー未登録");
                 return;
             }
 
-            statusEl.innerText = "🤖 Geminiが10問分の解答と解答速度を分析中...";
+            statusEl.innerText = "🤖 Geminiが解答とタイムを詳細分析中...";
 
-            const prompt = `あなたは英会話コーチです。ユーザーが瞬間英作文で解いた10問の「日本語問題」「ユーザーの英語回答」「解答にかかった時間」を送信します。
-1問ずつ「正誤判定」「模範解答」「タイムを踏まえたワンポイントアドバイス（パッと出たか、解説など）」をJSON形式で返してください。
+            const payload = {
+                contents: [{
+                    parts: [{
+                        text: `あなたは英会話コーチです。ユーザーの瞬間英作文結果を評価してください。
 
-入力データ:
-${JSON.stringify(userResults, null, 2)}
+データの入力形式:
+${JSON.stringify(userResults.map(r => ({ question: r.q, answer: r.a, timeSec: r.time })), null, 2)}
 
-必ず以下のJSON配列形式のみで回答を出力してください（Markdownのバックトウは不要です）:
+以下の規約を厳守してJSON配列のみを出力してください:
 [
   {
     "correct": trueまたはfalse,
-    "modelAnswer": "模範解答の英文",
-    "advice": "解説コメント（例：3秒で即答できて完璧です！/ 三単現のsに注意しましょう）"
+    "modelAnswer": "模範解答",
+    "advice": "タイムを踏まえた短い助言や文法のアドバイス"
   }
-]`;
+]`
+                    }]
+                }]
+            };
 
             try {
+                // v1beta の gemini-1.5-flash エンドポイント
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: prompt }] }]
-                    })
+                    body: JSON.stringify(payload)
                 });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
 
                 const data = await response.json();
                 let replyText = data.candidates[0].content.parts[0].text;
@@ -527,7 +535,7 @@ ${JSON.stringify(userResults, null, 2)}
                 
                 let html = "";
                 userResults.forEach((res, i) => {
-                    const evalData = aiEvaluations[i] || { correct: false, modelAnswer: "-", advice: "" };
+                    const evalData = aiEvaluations[i] || { correct: false, modelAnswer: res.defaultModel, advice: "確認してみましょう。" };
                     const isCorrect = evalData.correct;
                     
                     html += `
@@ -545,23 +553,26 @@ ${JSON.stringify(userResults, null, 2)}
                         </div>
                     `;
                 });
-                listEl.innerHTML = html;
+                document.getElementById('results-list').innerHTML = html;
 
             } catch (err) {
-                console.error(err);
-                statusEl.innerText = "⚠️ AI分析中にエラーが発生しました。時間を置いて再お試しください。";
-                renderSimpleResults();
+                console.error("Gemini API Error:", err);
+                statusEl.innerText = "💡 標準模範解答を表示しています（APIエラーのため）";
+                renderSimpleResults("AI接続失敗");
             }
         }
 
-        function renderSimpleResults() {
+        function renderSimpleResults(reason) {
             let html = "";
             userResults.forEach((res, i) => {
                 html += `
                     <div class="result-item">
                         <div class="res-q">問${i+1}. ${res.q}</div>
-                        <div class="res-time">⏱️ ${res.time}秒</div>
+                        <div>
+                            <span class="res-time">⏱️ ${res.time}秒</span>
+                        </div>
                         <div class="res-ans">あなたの回答: <strong>${res.a}</strong></div>
+                        <div class="res-ans" style="color:#059669;">標準模範解答: <strong>${res.defaultModel}</strong></div>
                     </div>
                 `;
             });
