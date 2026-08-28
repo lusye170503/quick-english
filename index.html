@@ -154,7 +154,6 @@
             margin: 10px 0;
         }
 
-        /* 一時停止オーバーレイ */
         .pause-overlay {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -168,7 +167,6 @@
             gap: 16px;
         }
 
-        /* 結果レポートスタイル */
         .summary-card {
             background: #EFF6FF;
             border: 1px solid #BFDBFE;
@@ -235,7 +233,18 @@
     <div class="container">
         <!-- レッスンページ -->
         <div id="page-lesson" class="page active">
-            <div class="card" id="quiz-card">
+            <!-- スタート待機画面 -->
+            <div class="card" id="start-card" style="text-align: center; padding: 30px 20px;">
+                <h2 style="margin-top: 0;">🏋️ 10問トレーニング</h2>
+                <p style="color: var(--text-muted); margin-bottom: 24px;">
+                    日本語を見て、瞬時に英語で発話または入力してください。<br>
+                    即答力を意識してチャレンジしましょう！
+                </p>
+                <button class="btn btn-primary" onclick="startLesson()">▶️ トレーニングを開始する</button>
+            </div>
+
+            <!-- クイズ実行画面 -->
+            <div class="card" id="quiz-card" style="display: none;">
                 <!-- 一時停止オーバーレイ -->
                 <div class="pause-overlay" id="pause-overlay" style="display: none;">
                     <h2>⏸️ 一時停止中</h2>
@@ -280,7 +289,7 @@
                 <h3>📝 フィードバック・解説</h3>
                 <div id="results-list"></div>
 
-                <button class="btn btn-primary" style="margin-top: 20px;" onclick="restartLesson()">もう一度挑戦する ➔</button>
+                <button class="btn btn-primary" style="margin-top: 20px;" onclick="resetToStart()">もう一度挑戦する ➔</button>
             </div>
         </div>
 
@@ -334,10 +343,9 @@
         let isRecording = false;
         let recognition = null;
         
-        // タイマー管理
         let questionStartTime = 0;
         let timerInterval = null;
-        let accumulatedTime = 0; // 一時停止用累積時間
+        let accumulatedTime = 0;
         let isPaused = false;
         let userResults = [];
 
@@ -345,11 +353,13 @@
             const savedKey = localStorage.getItem('gemini_api_key');
             if (savedKey) document.getElementById('api-key').value = savedKey;
             initSpeech();
-            startLesson();
+            resetToStart();
         };
 
         function switchTab(tabName) {
-            if (!isPaused) pauseLesson(); // タブ切り替え時は自動一時停止
+            if (!isPaused && document.getElementById('quiz-card').style.display === 'block') {
+                pauseLesson();
+            }
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
@@ -363,11 +373,20 @@
             event.currentTarget.classList.add('active');
         }
 
+        function resetToStart() {
+            clearInterval(timerInterval);
+            isPaused = false;
+            document.getElementById('start-card').style.display = 'block';
+            document.getElementById('quiz-card').style.display = 'none';
+            document.getElementById('result-card').style.display = 'none';
+            document.getElementById('pause-overlay').style.display = 'none';
+        }
+
         function startLesson() {
             currentQIndex = 0;
             userResults = [];
             isPaused = false;
-            document.getElementById('pause-overlay').style.display = 'none';
+            document.getElementById('start-card').style.display = 'none';
             document.getElementById('quiz-card').style.display = 'block';
             document.getElementById('result-card').style.display = 'none';
             loadQuestion();
@@ -413,7 +432,7 @@
         function abortLesson() {
             if (confirm("現在のレッスンを中断して最初に戻りますか？")) {
                 clearInterval(timerInterval);
-                startLesson();
+                resetToStart();
             }
         }
 
@@ -547,10 +566,6 @@ ${JSON.stringify(userResults, null, 2)}
                 `;
             });
             document.getElementById('results-list').innerHTML = html;
-        }
-
-        function restartLesson() {
-            startLesson();
         }
 
         function initSpeech() {
