@@ -48,6 +48,7 @@
             box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
             border: 1px solid var(--border);
             margin-bottom: 20px;
+            position: relative;
         }
 
         .header-status {
@@ -66,6 +67,12 @@
             font-weight: bold;
         }
 
+        .timer-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
         .timer {
             font-size: 1.1rem;
             font-weight: bold;
@@ -74,6 +81,17 @@
             padding: 4px 10px;
             border-radius: 8px;
             border: 1px solid #FCA5A5;
+        }
+
+        .btn-control-sm {
+            background: #E2E8F0;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            font-weight: bold;
+            color: var(--text);
         }
 
         .question-box {
@@ -134,6 +152,20 @@
             color: var(--text-muted);
             font-size: 0.85rem;
             margin: 10px 0;
+        }
+
+        /* 一時停止オーバーレイ */
+        .pause-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            gap: 16px;
         }
 
         /* 結果レポートスタイル */
@@ -201,11 +233,23 @@
     <header>🎙️ 瞬間英作文リアル音声コーチ</header>
 
     <div class="container">
+        <!-- レッスンページ -->
         <div id="page-lesson" class="page active">
             <div class="card" id="quiz-card">
+                <!-- 一時停止オーバーレイ -->
+                <div class="pause-overlay" id="pause-overlay" style="display: none;">
+                    <h2>⏸️ 一時停止中</h2>
+                    <button class="btn btn-primary" style="width: 200px;" onclick="resumeLesson()">▶️ 再開する</button>
+                    <button class="btn btn-skip" style="width: 200px;" onclick="abortLesson()">🛑 レッスンを中断</button>
+                </div>
+
                 <div class="header-status">
                     <span class="badge" id="q-number">第 1 問 / 10</span>
-                    <span class="timer" id="q-timer">⏱️ 0.0s</span>
+                    <div class="timer-container">
+                        <span class="timer" id="q-timer">⏱️ 0.0s</span>
+                        <button class="btn-control-sm" onclick="pauseLesson()">⏸️</button>
+                        <button class="btn-control-sm" onclick="abortLesson()">✕</button>
+                    </div>
                 </div>
                 
                 <div class="question-box" id="q-text">問題を取得中...</div>
@@ -221,6 +265,7 @@
                 <button class="btn btn-skip" onclick="submitAnswer(true)">⏭️ パス（パッと出ない）</button>
             </div>
 
+            <!-- 10問終了後の結果レポート画面 -->
             <div class="card" id="result-card" style="display: none;">
                 <h2>🎉 10問完了！お疲れ様でした</h2>
                 
@@ -239,6 +284,7 @@
             </div>
         </div>
 
+        <!-- 復習ノート -->
         <div id="page-review" class="page">
             <div class="card">
                 <h2>📑 復習ノート</h2>
@@ -246,6 +292,7 @@
             </div>
         </div>
 
+        <!-- 設定ページ -->
         <div id="page-settings" class="page">
             <div class="card">
                 <h2>⚙️ 設定</h2>
@@ -256,6 +303,7 @@
         </div>
     </div>
 
+    <!-- 下部ナビゲーション -->
     <nav class="nav-bar">
         <button class="nav-item active" onclick="switchTab('lesson')">
             <span>🏋️</span><span>レッスン</span>
@@ -286,10 +334,12 @@
         let isRecording = false;
         let recognition = null;
         
-        // タイマー・記録管理
+        // タイマー管理
         let questionStartTime = 0;
         let timerInterval = null;
-        let userResults = []; // { q: 日本語, a: 回答, time: 秒, isSkip: bool }
+        let accumulatedTime = 0; // 一時停止用累積時間
+        let isPaused = false;
+        let userResults = [];
 
         window.onload = function() {
             const savedKey = localStorage.getItem('gemini_api_key');
@@ -299,6 +349,7 @@
         };
 
         function switchTab(tabName) {
+            if (!isPaused) pauseLesson(); // タブ切り替え時は自動一時停止
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
 
@@ -315,36 +366,66 @@
         function startLesson() {
             currentQIndex = 0;
             userResults = [];
+            isPaused = false;
+            document.getElementById('pause-overlay').style.display = 'none';
             document.getElementById('quiz-card').style.display = 'block';
             document.getElementById('result-card').style.display = 'none';
             loadQuestion();
         }
 
         function loadQuestion() {
+            accumulatedTime = 0;
             document.getElementById('q-number').innerText = `第 ${currentQIndex + 1} 問 / ${questions.length}`;
             document.getElementById('q-text').innerText = questions[currentQIndex];
             document.getElementById('user-input').value = '';
 
-            // タイマースタート
+            startTimer();
+        }
+
+        function startTimer() {
             clearInterval(timerInterval);
             questionStartTime = Date.now();
             timerInterval = setInterval(updateTimer, 100);
         }
 
         function updateTimer() {
-            const elapsed = ((Date.now() - questionStartTime) / 1000).toFixed(1);
-            document.getElementById('q-timer').innerText = `⏱️ ${elapsed}s`;
+            if (isPaused) return;
+            const currentSession = (Date.now() - questionStartTime) / 1000;
+            const totalElapsed = (accumulatedTime + currentSession).toFixed(1);
+            document.getElementById('q-timer').innerText = `⏱️ ${totalElapsed}s`;
+        }
+
+        function pauseLesson() {
+            if (isPaused) return;
+            isPaused = true;
+            clearInterval(timerInterval);
+            accumulatedTime += (Date.now() - questionStartTime) / 1000;
+            if (isRecording) stopRecording();
+            document.getElementById('pause-overlay').style.display = 'flex';
+        }
+
+        function resumeLesson() {
+            isPaused = false;
+            document.getElementById('pause-overlay').style.display = 'none';
+            startTimer();
+        }
+
+        function abortLesson() {
+            if (confirm("現在のレッスンを中断して最初に戻りますか？")) {
+                clearInterval(timerInterval);
+                startLesson();
+            }
         }
 
         function submitAnswer(isSkip) {
             clearInterval(timerInterval);
-            const elapsed = parseFloat(((Date.now() - questionStartTime) / 1000).toFixed(1));
+            const currentSession = (Date.now() - questionStartTime) / 1000;
+            const elapsed = parseFloat((accumulatedTime + currentSession).toFixed(1));
             const answer = isSkip ? "（パス）" : document.getElementById('user-input').value.trim();
 
             if (!isSkip && !answer) {
                 alert('英文を入力するか、音声で回答してください（パスも可能です）。');
-                // タイマー再開
-                timerInterval = setInterval(updateTimer, 100);
+                startTimer();
                 return;
             }
 
@@ -369,7 +450,6 @@
             document.getElementById('quiz-card').style.display = 'none';
             document.getElementById('result-card').style.display = 'block';
 
-            // タイム計算
             const totalSec = userResults.reduce((acc, cur) => acc + cur.time, 0);
             const avgSec = (totalSec / userResults.length).toFixed(1);
             
@@ -379,7 +459,6 @@
             document.getElementById('total-time').innerText = `${mins > 0 ? mins + '分' : ''}${secs}秒`;
             document.getElementById('avg-time').innerText = `${avgSec}秒/問`;
 
-            // AI分析の呼び出し
             analyzeWithGemini();
         }
 
@@ -474,7 +553,6 @@ ${JSON.stringify(userResults, null, 2)}
             startLesson();
         }
 
-        // 音声認識
         function initSpeech() {
             if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
